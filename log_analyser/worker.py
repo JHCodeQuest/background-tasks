@@ -12,21 +12,9 @@ class LogWorker(QObject):
     finished = Signal()
     error = Signal(str)
 
-    def __init__(self):
-        super().__init__()
-        self._cancel_requested = False
-
-    @Slot()
-    def cancel(self):
-        self._cancel_requested = True
-        thread = self.thread()
-        if thread is not None:
-            thread.requestInterruption()
-
     @Slot(object)
     def scan(self,options: SearchOptions):
         try:
-            self._cancel_requested = False
             path_obj = Path(options.path)
 
             if path_obj.is_file():
@@ -40,12 +28,13 @@ class LogWorker(QObject):
                     self._scan_file(file_path, options, prefix=str(file_path), emit_progress=False)
                     self.progress.emit(int(i / total * 100))
 
-            self.finished.emit()
         except Exception as e:
             self.error.emit(str(e))
+        finally:
+            self.finished.emit()
 
     def _should_stop(self):
-        return self._cancel_requested or QThread.currentThread().isInterruptionRequested()
+        return QThread.currentThread().isInterruptionRequested()
 
     def _scan_file(self, file_path, options: SearchOptions, prefix="", emit_progress=True):
         size = file_path.stat().st_size or 1
