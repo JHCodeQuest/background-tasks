@@ -1,4 +1,6 @@
+import os
 import re
+import stat
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal, Slot, QThread
@@ -8,45 +10,84 @@ from models import SearchOptions
 
 class LogWorker(QObject):
     progress = Signal(int)
+    progress_range = Signal(int, int)
     match_found = Signal(str)
+    skipped = Signal(str)
     finished = Signal()
     error = Signal(str)
 
     @Slot(object)
-    def scan(self,options: SearchOptions):
+    def scan(self, options: SearchOptions) -> None:
+        completed = False
+        directory = False
+        self.progress_range.emit(0, 100)
+        self.progress.emit(0)
         try:
+            if self._should_stop():
+                return
+            if not options.path:
+                raise ValueError("Select a file or folder first.")
             path_obj = Path(options.path)
+            mode = path_obj.stat().st_mode
 
-            if path_obj.is_file():
+            if stat.S_ISREG(mode):
                 self._scan_file(path_obj, options)
-            else:
-                files = [p for p in path_obj.rglob("*") if p.is_file()]
-                total = len(files) or 1
-                for i, file_path in enumerate(files, start=1):
+            elif stat.S_ISDIR(mode):
+                directory = True
+                self.progress_range.emit(0, 0)
+
+                def on_walk_error(error: OSError) -> None:
+                    if Path(error.filename or path_obj) == path_obj:
+                        raise error
+                    self.skipped.emit(f"Skipped folder {error.filename}: {error.strerror}")
+
+                for root, _, filenames in os.walk(path_obj, onerror=on_walk_error):
                     if self._should_stop():
                         break
-                    self._scan_file(file_path, options, prefix=str(file_path), emit_progress=False)
-                    self.progress.emit(int(i / total * 100))
-
+                    for name in filenames:
+                        if self._should_stop():
+                            break
+                        file_path = Path(root) / name
+                        try:
+                            self._scan_file(file_path, options, prefix=str(file_path), emit_progress=False)
+                        except (OSError, UnicodeError, ValueError) as e:
+                            self.skipped.emit(f"Skipped file {file_path}: {e}")
+                    if self._should_stop():
+                        break
+            else:
+                raise ValueError("Select a regular file or folder.")
+            completed = True
         except Exception as e:
             self.error.emit(str(e))
         finally:
+            self.progress_range.emit(0, 100)
+            if directory:
+                self.progress.emit(0)
+            if completed and not self._should_stop():
+                self.progress.emit(100)
             self.finished.emit()
 
     def _should_stop(self):
         return QThread.currentThread().isInterruptionRequested()
 
-    def _scan_file(self, file_path, options: SearchOptions, prefix="", emit_progress=True):
-        size = file_path.stat().st_size or 1
+    def _scan_file(self, file_path: Path, options: SearchOptions, prefix: str = "", emit_progress: bool = True) -> None:
+        info = file_path.stat()
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError("Not a regular file.")
+        size = info.st_size or 1
         flags = 0 if options.case_sensitive else re.IGNORECASE
         regex = re.compile(options.pattern, flags) if options.use_regex else None
         pattern = options.pattern if options.case_sensitive else options.pattern.lower()
 
-        with file_path.open("r", encoding="utf-8", errors="ignore") as f:
+        with file_path.open("r", encoding="utf-8-sig", errors="strict") as f:
             while not self._should_stop():
                 line = f.readline()
                 if not line:
                     break
+
+                # shortcut: NUL detection only, use format detection if broader binary filtering is needed.
+                if "\x00" in line:
+                    raise ValueError("Binary data (NUL byte) is not supported.")
 
                 if emit_progress:
                     pct = int(f.tell() / size * 100)

@@ -129,7 +129,9 @@ class MainWindow(QWidget):
 
         self.scan_requested.connect(self.worker.scan, Qt.ConnectionType.QueuedConnection)
         self.worker.progress.connect(self.progress.setValue)
+        self.worker.progress_range.connect(self.progress.setRange)
         self.worker.match_found.connect(self.results.addItem)
+        self.worker.skipped.connect(self.results.addItem)
         self.worker.error.connect(self.on_error)
         self.worker.finished.connect(self.thread.quit, Qt.ConnectionType.DirectConnection)
         self.thread.finished.connect(self.worker.deleteLater)

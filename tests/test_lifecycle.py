@@ -1,5 +1,6 @@
 import threading
 import time
+from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, QThread
@@ -174,5 +175,35 @@ def test_close_during_scan_is_deferred(app, window, monkeypatch):
         wait_until(app, lambda: window.thread is None)
         assert not window.isVisible()
         assert window.worker is None
+    finally:
+        release.set()
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+def test_folder_progress_returns_from_busy_state(app, window, monkeypatch, cancel):
+    entered = threading.Event()
+    release = threading.Event()
+
+    class PausedWorker(LogWorker):
+        def _scan_file(self, *args, **kwargs):
+            entered.set()
+            release.wait(2)
+            super()._scan_file(*args, **kwargs)
+
+    monkeypatch.setattr(main_window, "LogWorker", PausedWorker)
+    window.selected_path = str(Path(window.selected_path).parent)
+    try:
+        window.start_scan()
+        wait_until(app, entered.is_set)
+        app.processEvents()
+        assert (window.progress.minimum(), window.progress.maximum()) == (0, 0)
+
+        if cancel:
+            window.cancel_scan()
+        release.set()
+        wait_until(app, lambda: window.thread is None)
+
+        assert (window.progress.minimum(), window.progress.maximum()) == (0, 100)
+        assert window.progress.value() == (0 if cancel else 100)
     finally:
         release.set()
