@@ -19,6 +19,7 @@ def test_initial_labels_and_button_states(window):
     assert window.case_checkbox.text().replace("&", "") == "Case sensitive"
     assert window.start_button.isEnabled()
     assert not window.cancel_button.isEnabled()
+    assert not window.export_button.isEnabled()
     assert window.search_label.buddy() is window.pattern_input
     assert window.status_label.text() == "Ready | Matches: 0 | Skipped files: 0 | Skipped folders: 0"
 
@@ -79,6 +80,7 @@ def test_controls_expose_accessible_names(window):
         (window.case_checkbox, "Case sensitive"),
         (window.start_button, "Start"),
         (window.cancel_button, "Cancel"),
+        (window.export_button, "Export..."),
         (window.progress, "Scan progress"),
         (window.results, "Search results"),
         (window.status_label, "Scan status"),

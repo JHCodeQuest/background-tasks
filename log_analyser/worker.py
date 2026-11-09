@@ -1,8 +1,10 @@
+import json
 import os
 import re
 import stat
 import time
 from pathlib import Path
+from typing import TextIO
 
 from PySide6.QtCore import QObject, Signal, Slot, QThread
 
@@ -15,12 +17,21 @@ RESULT_BATCH_SIZE = 200
 RESULT_UPDATE_INTERVAL = 0.1
 
 
+class ResultStorageError(Exception):
+    """Keep snapshot write failures out of the unreadable-input skip handler."""
+
+
 class LogWorker(QObject):
     progress = Signal(int)
     progress_range = Signal(int, int)
     results_ready = Signal(list, object)
+    export_ready = Signal()
     finished = Signal(str)
     error = Signal(str)
+
+    def __init__(self, export_file: TextIO | None = None):
+        super().__init__()
+        self._export_file = export_file
 
     @Slot(object)
     def scan(self, options: SearchOptions) -> None:
@@ -30,6 +41,8 @@ class LogWorker(QObject):
         self._skipped_folder_count = 0
         self._reported_count = 0
         self._last_result_update = time.monotonic()
+        self._export_failed = False
+        error_message = None
         completed = False
         directory = False
         outcome = "Failed"
@@ -54,7 +67,9 @@ class LogWorker(QObject):
                     if Path(error.filename or path_obj) == path_obj:
                         raise error
                     self._skipped_folder_count += 1
-                    self._queue_result(f"Skipped folder {error.filename}: {error.strerror}")
+                    message = f"Skipped folder {error.filename}: {error.strerror}"
+                    self._queue_result(message)
+                    self._write_export_row("skipped_folder", error.filename or "", None, message)
 
                 for root, _, filenames in os.walk(path_obj, onerror=on_walk_error):
                     if self._should_stop():
@@ -67,7 +82,9 @@ class LogWorker(QObject):
                             self._scan_file(file_path, options, emit_progress=False)
                         except (OSError, UnicodeError, ValueError) as e:
                             self._skipped_file_count += 1
-                            self._queue_result(f"Skipped file {file_path}: {e}")
+                            message = f"Skipped file {file_path}: {e}"
+                            self._queue_result(message)
+                            self._write_export_row("skipped_file", str(file_path), None, message)
                     if self._should_stop():
                         break
             else:
@@ -75,17 +92,47 @@ class LogWorker(QObject):
             completed = True
         except Exception as e:
             self._flush_results(force=True)
-            self.error.emit(str(e))
+            error_message = str(e)
+            self.error.emit(error_message)
         finally:
             self._flush_results(force=True)
             if completed:
                 outcome = "Cancelled" if self._should_stop() else "Finished"
+            if self._export_file is not None and not self._export_failed:
+                try:
+                    if error_message is not None:
+                        self._write_export_row("error", options.path, None, f"Error: {error_message}")
+                    summary = (
+                        f"{outcome} | Matches: {self._match_count} | "
+                        f"Skipped files: {self._skipped_file_count} | Skipped folders: {self._skipped_folder_count}"
+                    )
+                    self._write_export_row("summary", options.path, None, summary)
+                    self._export_file.flush()
+                    self._export_file.seek(0)
+                except (ResultStorageError, OSError, UnicodeError, ValueError) as e:
+                    outcome = "Failed"
+                    self._export_failed = True
+                    message = str(e) if isinstance(e, ResultStorageError) else f"Could not retain results for export: {e}"
+                    self.error.emit(message)
+                else:
+                    self.export_ready.emit()
             self.progress_range.emit(0, 100)
             if directory:
                 self.progress.emit(0)
             if outcome == "Finished":
                 self.progress.emit(100)
             self.finished.emit(outcome)
+
+    def _write_export_row(self, kind: str, path: str, line: int | None, text: str) -> None:
+        if self._export_file is None:
+            return
+        try:
+            record = json.dumps([kind, path, line, text]) + "\n"
+            if self._export_file.write(record) != len(record):
+                raise OSError("Incomplete temporary result write.")
+        except (OSError, UnicodeError, ValueError) as e:
+            self._export_failed = True
+            raise ResultStorageError(f"Could not retain results for export: {e}") from e
 
     def _queue_result(self, message: str) -> None:
         total = self._match_count + self._skipped_file_count + self._skipped_folder_count
@@ -117,6 +164,8 @@ class LogWorker(QObject):
         info = file_path.stat()
         if not stat.S_ISREG(info.st_mode):
             raise ValueError("Not a regular file.")
+        if self._export_file is not None and os.path.samestat(info, os.fstat(self._export_file.fileno())):
+            return
         size = info.st_size or 1
         flags = 0 if options.case_sensitive else re.IGNORECASE
         regex = re.compile(options.pattern, flags) if options.use_regex else None
@@ -147,5 +196,6 @@ class LogWorker(QObject):
                     self._match_count += 1
                     out = f"{file_path}:{line_number}: {line.rstrip()}"
                     self._queue_result(out)
+                    self._write_export_row("match", str(file_path), line_number, line.rstrip("\r\n"))
                 else:
                     self._flush_results()
