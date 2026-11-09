@@ -6,5 +6,3 @@ class SearchOptions:
     pattern: str
     use_regex: bool = False
     case_sensitive: bool = False
-    directory_mode: bool = False
-    

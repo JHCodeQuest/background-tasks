@@ -146,7 +146,6 @@ class MainWindow(QWidget):
             pattern=pattern,
             use_regex=self.regex_checkbox.isChecked(),
             case_sensitive=self.case_checkbox.isChecked(),
-            directory_mode=False
         )
 
         self.thread = QThread()

@@ -2,6 +2,35 @@
 
 A local Python/PySide6 desktop tool for searching a file or folder by keyword or regular expression.
 
+## Setup and launch (Windows)
+
+Tested with Python 3.11, PySide6 6.12.0, and pytest 9.2.0 on Windows. Install Python 3.11 with the Python launcher (`py`); running the application requires a desktop session. Other operating systems and Python versions have not been verified.
+
+Run these commands from the repository root in PowerShell:
+
+```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe .\log_analyser\main.py
+```
+
+No virtual-environment activation or external services are needed. Use the script command above; a packaged executable or module entry point is not provided.
+
+## Development and tests
+
+The development requirements include the runtime requirements, so they can also be installed into a fresh virtual environment:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.\.venv\Scripts\python.exe -m pip check
+.\.venv\Scripts\python.exe -m pytest
+git diff --check
+```
+
+Tests automatically use Qt's offscreen platform, synthetic files, and isolated temporary directories. They cover matching, scanning errors, worker/thread lifecycle, keyboard/accessibility semantics, capped/batched output, large scans, and a real startup/shutdown smoke test. They do not replace native file-dialog or screen-reader testing.
+
+The GitHub Actions **Tests** workflow runs these checks on Windows/Python 3.11 for pushes, pull requests, and manual runs. Dependency versions are pinned in `requirements.txt` and `requirements-dev.txt`; update them intentionally and rerun the suite.
+
 ## Using the window
 
 - Choose **File** or **Folder** independently, enter a search term, and press **Start**. Cancelling a picker preserves the current selection.
