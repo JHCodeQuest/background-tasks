@@ -1,3 +1,5 @@
+import re
+
 from PySide6.QtCore import QThread
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
@@ -91,6 +93,14 @@ class MainWindow(QWidget):
         if not pattern:
             self.results.addItem("Enter a search term.")
             return
+
+        if self.regex_checkbox.isChecked():
+            try:
+                flags = 0 if self.case_checkbox.isChecked() else re.IGNORECASE
+                re.compile(pattern, flags)
+            except re.error as e:
+                self.results.addItem(f"Invalid regular expression: {e}")
+                return
         
         self.results.clear()
         self.progress.setValue(0)

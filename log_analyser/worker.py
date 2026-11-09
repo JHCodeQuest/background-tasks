@@ -50,7 +50,8 @@ class LogWorker(QObject):
     def _scan_file(self, file_path, options: SearchOptions, prefix="", emit_progress=True):
         size = file_path.stat().st_size or 1
         flags = 0 if options.case_sensitive else re.IGNORECASE
-        regex = re.compile(options.pattern, flags)
+        regex = re.compile(options.pattern, flags) if options.use_regex else None
+        pattern = options.pattern if options.case_sensitive else options.pattern.lower()
 
         with file_path.open("r", encoding="utf-8", errors="ignore") as f:
             while not self._should_stop():
@@ -63,7 +64,7 @@ class LogWorker(QObject):
                     self.progress.emit(min(pct, 100))
 
                 text = line if options.case_sensitive else line.lower()
-                hit = bool(regex.search(line)) if options.use_regex else (options.pattern.lower() in text)
+                hit = bool(regex.search(line)) if options.use_regex else (pattern in text)
                 if hit:
                     out = f"{prefix}: {line.rstrip()}" if prefix else line.rstrip()
                     self.match_found.emit(out)
