@@ -10,6 +10,14 @@ A local Python/PySide6 desktop tool for searching a file or folder by keyword or
 - Finished means traversal completed, not that every file was readable. Check skip counts and warning messages for incomplete coverage.
 - Controls support Tab/Shift+Tab, Space to activate buttons/checkboxes, and Alt-key mnemonics shown by the native platform. The search field has a visible label; results, progress, and status expose accessible names.
 
+## Large scans
+
+- The first 5,000 match/warning rows are displayed in discovery order, with a clear **Display limited to 5,000 rows** notice when more are found. This shared limit includes skipped-file and skipped-folder warnings.
+- Scanning continues after the display limit. Match/skip counts cover everything processed, not just visible rows; a cancelled scan only counts work done before stopping. Some warning details may be hidden by the display limit.
+- Fatal errors are always displayed, even after the row limit. They may add one extra row and are not included in match/skip counts.
+- Results are delivered in batches of up to 200 rows or roughly every 100 ms as scanning advances; pending rows are flushed on completion, cancellation, or error. After the cap, only periodic count updates are sent. File progress updates are sent only when the percentage changes.
+- Files are still read one line at a time. The row cap is not a fixed RAM limit: exceptionally long individual lines can still consume significant memory. Cancellation still waits for an in-progress filesystem operation or regex evaluation to return.
+
 ## Supported input
 
 - Regular text files encoded as UTF-8, with or without a UTF-8 BOM.

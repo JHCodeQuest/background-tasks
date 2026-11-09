@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QEvent, QThread, Qt
+from PySide6.QtCore import QCoreApplication, QEvent, QThread, QTimer, Qt
 from PySide6.QtTest import QTest
 from shiboken6 import isValid
 
@@ -279,3 +279,60 @@ def test_start_and_cancel_work_from_keyboard(app, window, monkeypatch):
         assert window.status_label.text().startswith("Cancelled | ")
     finally:
         release.set()
+
+
+def test_large_scan_limits_display_but_counts_all_matches(app, window):
+    Path(window.selected_path).write_text("ERROR match\n" * 10_005, encoding="utf-8")
+    window.start_scan()
+    wait_until(app, lambda: window.thread is None)
+
+    assert window.results.count() == 5_000
+    assert window.results.item(0).text() == f"{window.selected_path}:1: ERROR match"
+    assert window.results.item(4_999).text() == f"{window.selected_path}:5000: ERROR match"
+    assert window.status_label.text() == (
+        "Finished | Matches: 10005 | Skipped files: 0 | Skipped folders: 0"
+        " | Display limited to 5,000 rows"
+    )
+
+    Path(window.selected_path).write_text("INFO no matches\n", encoding="utf-8")
+    window.start_scan()
+    wait_until(app, lambda: window.thread is None)
+    assert window.results.count() == 0
+    assert window.status_label.text() == "Finished | Matches: 0 | Skipped files: 0 | Skipped folders: 0"
+
+
+def test_fatal_error_remains_visible_after_display_limit(app, window):
+    Path(window.selected_path).write_bytes(b"ERROR match\n" * 5_001 + b"INFO\x00binary\n")
+    window.start_scan()
+    wait_until(app, lambda: window.thread is None)
+
+    assert window.results.count() == 5_001
+    assert window.results.item(5_000).text().startswith("Error: Binary data")
+    assert window.status_label.text() == (
+        "Failed | Matches: 5001 | Skipped files: 0 | Skipped folders: 0"
+        " | Display limited to 5,000 rows"
+    )
+
+
+def test_large_scan_keeps_ui_timer_responsive_and_can_be_cancelled(app, window):
+    Path(window.selected_path).write_text("ERROR match\n" * 1_000_000, encoding="utf-8")
+    ticks = []
+    timer = QTimer()
+
+    def tick():
+        ticks.append(time.monotonic())
+        if len(ticks) >= 3 and window._match_count > 0:
+            window.cancel_scan()
+
+    timer.timeout.connect(tick)
+    try:
+        window.start_scan()
+        timer.start(5)
+        wait_until(app, lambda: window.thread is None)
+
+        assert len(ticks) >= 3
+        assert 0 < window._match_count < 1_000_000
+        assert window.results.count() <= 5_000
+        assert window.status_label.text().startswith("Cancelled | ")
+    finally:
+        timer.stop()

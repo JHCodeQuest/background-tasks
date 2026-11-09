@@ -28,7 +28,7 @@ def test_search_matches(tmp_path, pattern, use_regex, case_sensitive, expected):
     log.write_text("\n".join(lines) + "\n", encoding="utf-8")
     worker = LogWorker()
     matches, errors, finished = [], [], []
-    worker.match_found.connect(matches.append)
+    worker.results_ready.connect(lambda rows, counts: matches.extend(rows))
     worker.error.connect(errors.append)
     worker.finished.connect(finished.append)
 

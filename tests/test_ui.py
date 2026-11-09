@@ -93,7 +93,7 @@ def test_matches_include_file_and_physical_line_number(tmp_path):
     log.write_text("INFO first\n\nERROR third\nERROR fourth\n", encoding="utf-8")
     worker = LogWorker()
     matches = []
-    worker.match_found.connect(matches.append)
+    worker.results_ready.connect(lambda rows, counts: matches.extend(rows))
 
     worker.scan(SearchOptions(str(log), "ERROR"))
 

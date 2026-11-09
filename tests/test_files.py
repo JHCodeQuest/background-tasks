@@ -15,9 +15,12 @@ def scan():
     def run(path, pattern="ERROR", worker=None):
         worker = worker or LogWorker()
         events = {"matches": [], "errors": [], "skipped": [], "progress": [], "ranges": [], "finished": []}
-        worker.match_found.connect(events["matches"].append)
+        def collect(rows, counts):
+            for row in rows:
+                events["skipped" if row.startswith("Skipped ") else "matches"].append(row)
+
+        worker.results_ready.connect(collect)
         worker.error.connect(events["errors"].append)
-        worker.skipped.connect(lambda message, directory: events["skipped"].append(message))
         worker.progress.connect(events["progress"].append)
         worker.progress_range.connect(lambda low, high: events["ranges"].append((low, high)))
         worker.finished.connect(events["finished"].append)

@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QListWidget, QProgressBar, QFileDialog,
     QLabel, QCheckBox
 )
-from worker import LogWorker
+from worker import LogWorker, MAX_DISPLAY_ROWS
 from models import SearchOptions
 
 
@@ -156,8 +156,7 @@ class MainWindow(QWidget):
         self.scan_requested.connect(self.worker.scan, Qt.ConnectionType.QueuedConnection)
         self.worker.progress.connect(self.progress.setValue)
         self.worker.progress_range.connect(self.progress.setRange)
-        self.worker.match_found.connect(self.on_match)
-        self.worker.skipped.connect(self.on_skipped)
+        self.worker.results_ready.connect(self.on_results)
         self.worker.error.connect(self.on_error)
         self.worker.finished.connect(self.on_scan_finished)
         self.worker.finished.connect(self.thread.quit, Qt.ConnectionType.DirectConnection)
@@ -176,19 +175,10 @@ class MainWindow(QWidget):
                 self._scan_status = "Cancelling"
                 self._update_status()
 
-    @Slot(str)
-    def on_match(self, message: str) -> None:
-        self.results.addItem(message)
-        self._match_count += 1
-        self._update_status()
-
-    @Slot(str, bool)
-    def on_skipped(self, message: str, directory: bool) -> None:
-        self.results.addItem(message)
-        if directory:
-            self._skipped_folder_count += 1
-        else:
-            self._skipped_file_count += 1
+    @Slot(list, object)
+    def on_results(self, rows: list[str], counts: tuple[int, int, int]) -> None:
+        self.results.addItems(rows)
+        self._match_count, self._skipped_file_count, self._skipped_folder_count = counts
         self._update_status()
 
     @Slot(str)
@@ -197,10 +187,13 @@ class MainWindow(QWidget):
         self._update_status()
 
     def _update_status(self) -> None:
-        self.status_label.setText(
+        status = (
             f"{self._scan_status} | Matches: {self._match_count} | "
             f"Skipped files: {self._skipped_file_count} | Skipped folders: {self._skipped_folder_count}"
         )
+        if self._match_count + self._skipped_file_count + self._skipped_folder_count > MAX_DISPLAY_ROWS:
+            status += f" | Display limited to {MAX_DISPLAY_ROWS:,} rows"
+        self.status_label.setText(status)
         self.status_label.setAccessibleDescription(self.status_label.text())
 
     @Slot(str)
