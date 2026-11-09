@@ -24,21 +24,19 @@ from worker import LogWorker
 )
 def test_search_matches(tmp_path, pattern, use_regex, case_sensitive, expected):
     log = tmp_path / "sample.log"
-    log.write_text(
-        "ERROR first\nerror second\n[INFO] third\nvalue(foo)\nwild*card\nfile.log\n",
-        encoding="utf-8",
-    )
+    lines = ["ERROR first", "error second", "[INFO] third", "value(foo)", "wild*card", "file.log"]
+    log.write_text("\n".join(lines) + "\n", encoding="utf-8")
     worker = LogWorker()
     matches, errors, finished = [], [], []
     worker.match_found.connect(matches.append)
     worker.error.connect(errors.append)
-    worker.finished.connect(lambda: finished.append(True))
+    worker.finished.connect(finished.append)
 
     worker.scan(SearchOptions(str(log), pattern, use_regex, case_sensitive))
 
     assert errors == []
-    assert matches == expected
-    assert finished == [True]
+    assert matches == [f"{log}:{lines.index(line) + 1}: {line}" for line in expected]
+    assert finished == ["Finished"]
 
 
 @pytest.mark.parametrize("pattern", ["[", "(", "*"])

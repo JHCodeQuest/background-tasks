@@ -12,18 +12,20 @@ class LogWorker(QObject):
     progress = Signal(int)
     progress_range = Signal(int, int)
     match_found = Signal(str)
-    skipped = Signal(str)
-    finished = Signal()
+    skipped = Signal(str, bool)
+    finished = Signal(str)
     error = Signal(str)
 
     @Slot(object)
     def scan(self, options: SearchOptions) -> None:
         completed = False
         directory = False
+        outcome = "Failed"
         self.progress_range.emit(0, 100)
         self.progress.emit(0)
         try:
             if self._should_stop():
+                outcome = "Cancelled"
                 return
             if not options.path:
                 raise ValueError("Select a file or folder first.")
@@ -39,7 +41,7 @@ class LogWorker(QObject):
                 def on_walk_error(error: OSError) -> None:
                     if Path(error.filename or path_obj) == path_obj:
                         raise error
-                    self.skipped.emit(f"Skipped folder {error.filename}: {error.strerror}")
+                    self.skipped.emit(f"Skipped folder {error.filename}: {error.strerror}", True)
 
                 for root, _, filenames in os.walk(path_obj, onerror=on_walk_error):
                     if self._should_stop():
@@ -49,9 +51,9 @@ class LogWorker(QObject):
                             break
                         file_path = Path(root) / name
                         try:
-                            self._scan_file(file_path, options, prefix=str(file_path), emit_progress=False)
+                            self._scan_file(file_path, options, emit_progress=False)
                         except (OSError, UnicodeError, ValueError) as e:
-                            self.skipped.emit(f"Skipped file {file_path}: {e}")
+                            self.skipped.emit(f"Skipped file {file_path}: {e}", False)
                     if self._should_stop():
                         break
             else:
@@ -60,17 +62,19 @@ class LogWorker(QObject):
         except Exception as e:
             self.error.emit(str(e))
         finally:
+            if completed:
+                outcome = "Cancelled" if self._should_stop() else "Finished"
             self.progress_range.emit(0, 100)
             if directory:
                 self.progress.emit(0)
-            if completed and not self._should_stop():
+            if outcome == "Finished":
                 self.progress.emit(100)
-            self.finished.emit()
+            self.finished.emit(outcome)
 
     def _should_stop(self):
         return QThread.currentThread().isInterruptionRequested()
 
-    def _scan_file(self, file_path: Path, options: SearchOptions, prefix: str = "", emit_progress: bool = True) -> None:
+    def _scan_file(self, file_path: Path, options: SearchOptions, emit_progress: bool = True) -> None:
         info = file_path.stat()
         if not stat.S_ISREG(info.st_mode):
             raise ValueError("Not a regular file.")
@@ -78,12 +82,14 @@ class LogWorker(QObject):
         flags = 0 if options.case_sensitive else re.IGNORECASE
         regex = re.compile(options.pattern, flags) if options.use_regex else None
         pattern = options.pattern if options.case_sensitive else options.pattern.lower()
+        line_number = 0
 
         with file_path.open("r", encoding="utf-8-sig", errors="strict") as f:
             while not self._should_stop():
                 line = f.readline()
                 if not line:
                     break
+                line_number += 1
 
                 # shortcut: NUL detection only, use format detection if broader binary filtering is needed.
                 if "\x00" in line:
@@ -96,5 +102,5 @@ class LogWorker(QObject):
                 text = line if options.case_sensitive else line.lower()
                 hit = bool(regex.search(line)) if options.use_regex else (pattern in text)
                 if hit:
-                    out = f"{prefix}: {line.rstrip()}" if prefix else line.rstrip()
+                    out = f"{file_path}:{line_number}: {line.rstrip()}"
                     self.match_found.emit(out)

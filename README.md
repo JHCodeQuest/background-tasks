@@ -2,6 +2,14 @@
 
 A local Python/PySide6 desktop tool for searching a file or folder by keyword or regular expression.
 
+## Using the window
+
+- Choose **File** or **Folder** independently, enter a search term, and press **Start**. Cancelling a picker preserves the current selection.
+- Matches use `path:line: text`, with physical line numbers starting at 1, for both file and folder scans.
+- The status shows Scanning/Cancelling followed by Finished, Cancelled, or Failed, plus counts of matching lines, skipped files, and skipped folders. Counts reset for each scan; warnings and errors are not counted as matches.
+- Finished means traversal completed, not that every file was readable. Check skip counts and warning messages for incomplete coverage.
+- Controls support Tab/Shift+Tab, Space to activate buttons/checkboxes, and Alt-key mnemonics shown by the native platform. The search field has a visible label; results, progress, and status expose accessible names.
+
 ## Supported input
 
 - Regular text files encoded as UTF-8, with or without a UTF-8 BOM.

@@ -1,9 +1,12 @@
+import errno
+import os
 import threading
 import time
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QEvent, QThread
+from PySide6.QtCore import QCoreApplication, QEvent, QThread, Qt
+from PySide6.QtTest import QTest
 from shiboken6 import isValid
 
 import main_window
@@ -51,12 +54,12 @@ def test_worker_always_finishes_after_error(tmp_path):
     worker = LogWorker()
     errors, finished = [], []
     worker.error.connect(errors.append)
-    worker.finished.connect(lambda: finished.append(True))
+    worker.finished.connect(finished.append)
 
     worker.scan(SearchOptions(str(log), "[", use_regex=True))
 
     assert len(errors) == 1
-    assert finished == [True]
+    assert finished == ["Failed"]
 
 
 def test_scan_runs_off_ui_thread(app, window, monkeypatch):
@@ -86,7 +89,8 @@ def test_success_cleans_up_and_allows_repeated_scans(app, window):
         assert not isValid(worker)
         assert window.start_button.isEnabled()
         assert not window.cancel_button.isEnabled()
-        assert window.results.item(0).text() == "ERROR first"
+        assert window.results.item(0).text() == f"{window.selected_path}:1: ERROR first"
+        assert window.status_label.text() == "Finished | Matches: 1 | Skipped files: 0 | Skipped folders: 0"
 
 
 def test_error_cleans_up_before_enabling_restart(app, window, monkeypatch):
@@ -105,11 +109,13 @@ def test_error_cleans_up_before_enabling_restart(app, window, monkeypatch):
     assert window.start_button.isEnabled()
     assert not window.cancel_button.isEnabled()
     assert window.results.item(0).text() == "Error: Cannot read test log"
+    assert window.status_label.text() == "Failed | Matches: 0 | Skipped files: 0 | Skipped folders: 0"
 
     monkeypatch.setattr(main_window, "LogWorker", LogWorker)
     window.start_scan()
     wait_until(app, lambda: window.thread is None)
-    assert window.results.item(0).text() == "ERROR first"
+    assert window.results.item(0).text() == f"{window.selected_path}:1: ERROR first"
+    assert window.status_label.text() == "Finished | Matches: 1 | Skipped files: 0 | Skipped folders: 0"
 
 
 def test_second_start_does_not_replace_active_scan(app, window):
@@ -137,15 +143,18 @@ def test_cancellation_cleans_up(app, window, monkeypatch, wait_for_worker):
     monkeypatch.setattr(main_window, "LogWorker", PausedWorker)
     try:
         window.start_scan()
+        assert window.status_label.text().startswith("Scanning | ")
         if wait_for_worker:
             wait_until(app, entered.is_set)
         window.cancel_scan()
+        assert window.status_label.text().startswith("Cancelling | ")
         release.set()
         wait_until(app, lambda: window.thread is None)
 
         assert window.worker is None
         assert window.results.count() == 0
         assert not window.cancel_button.isEnabled()
+        assert window.status_label.text() == "Cancelled | Matches: 0 | Skipped files: 0 | Skipped folders: 0"
         window.cancel_scan()
     finally:
         release.set()
@@ -205,5 +214,68 @@ def test_folder_progress_returns_from_busy_state(app, window, monkeypatch, cance
 
         assert (window.progress.minimum(), window.progress.maximum()) == (0, 100)
         assert window.progress.value() == (0 if cancel else 100)
+    finally:
+        release.set()
+
+
+def test_summary_counts_matches_and_skipped_files_and_folders(app, window, monkeypatch):
+    root = Path(window.selected_path).parent
+    (root / "binary.log").write_bytes(b"ERROR\x00binary\n")
+    blocked = root / "blocked"
+    blocked.mkdir()
+    original_scandir = os.scandir
+
+    def discover(path):
+        if Path(path) == blocked:
+            raise PermissionError(errno.EACCES, "Access denied", str(path))
+        return original_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", discover)
+    window.selected_path = str(root)
+    for _ in range(2):
+        window.start_scan()
+        wait_until(app, lambda: window.thread is None)
+
+        assert window.results.count() == 3
+        assert window.status_label.text() == "Finished | Matches: 1 | Skipped files: 1 | Skipped folders: 1"
+        assert window.status_label.accessibleDescription() == window.status_label.text()
+
+
+def test_no_matches_still_reports_finished(app, window):
+    window.pattern_input.setText("missing")
+    window.start_scan()
+    wait_until(app, lambda: window.thread is None)
+
+    assert window.results.count() == 0
+    assert window.status_label.text() == "Finished | Matches: 0 | Skipped files: 0 | Skipped folders: 0"
+
+
+def test_start_and_cancel_work_from_keyboard(app, window, monkeypatch):
+    entered = threading.Event()
+    release = threading.Event()
+
+    class PausedWorker(LogWorker):
+        def _scan_file(self, *args, **kwargs):
+            entered.set()
+            release.wait(2)
+            super()._scan_file(*args, **kwargs)
+
+    monkeypatch.setattr(main_window, "LogWorker", PausedWorker)
+    window.show()
+    window.activateWindow()
+    app.processEvents()
+    try:
+        window.start_button.setFocus()
+        QTest.keyClick(window.start_button, Qt.Key.Key_Space)
+        wait_until(app, entered.is_set)
+        assert not window.start_button.isEnabled()
+        assert window.cancel_button.isEnabled()
+
+        window.cancel_button.setFocus()
+        QTest.keyClick(window.cancel_button, Qt.Key.Key_Space)
+        release.set()
+        wait_until(app, lambda: window.thread is None)
+
+        assert window.status_label.text().startswith("Cancelled | ")
     finally:
         release.set()

@@ -17,12 +17,12 @@ def scan():
         events = {"matches": [], "errors": [], "skipped": [], "progress": [], "ranges": [], "finished": []}
         worker.match_found.connect(events["matches"].append)
         worker.error.connect(events["errors"].append)
-        worker.skipped.connect(events["skipped"].append)
+        worker.skipped.connect(lambda message, directory: events["skipped"].append(message))
         worker.progress.connect(events["progress"].append)
         worker.progress_range.connect(lambda low, high: events["ranges"].append((low, high)))
-        worker.finished.connect(lambda: events["finished"].append(True))
+        worker.finished.connect(events["finished"].append)
         worker.scan(SearchOptions(str(path), pattern))
-        assert events["finished"] == [True]
+        assert len(events["finished"]) == 1
         return events
 
     return run
@@ -58,7 +58,7 @@ def test_utf8_bom_is_not_part_of_first_line(tmp_path, scan):
     events = scan(log)
 
     assert events["errors"] == []
-    assert events["matches"] == ["ERROR café"]
+    assert events["matches"] == [f"{log}:1: ERROR café"]
 
 
 @pytest.mark.parametrize("content", [b"ERROR\x00binary\n", b"ERROR\xffinvalid\n", "ERROR\n".encode("utf-16")])
@@ -91,7 +91,7 @@ def test_unreadable_file_does_not_abort_folder(tmp_path, scan, monkeypatch, exce
     events = scan(tmp_path)
 
     assert events["errors"] == []
-    assert events["matches"] == [f"{good}: ERROR readable"]
+    assert events["matches"] == [f"{good}:1: ERROR readable"]
     assert events["progress"][-1] == 100
     assert len(events["skipped"]) == 1
     assert str(blocked) in events["skipped"][0]
@@ -152,7 +152,7 @@ def test_unsupported_files_are_reported_and_other_files_continue(tmp_path, scan,
     events = scan(tmp_path)
 
     assert events["errors"] == []
-    assert events["matches"] == [f"{good}: ERROR café"]
+    assert events["matches"] == [f"{good}:1: ERROR café"]
     assert len(events["skipped"]) == 1
     assert str(bad) in events["skipped"][0]
     assert events["progress"][-1] == 100
@@ -189,7 +189,7 @@ def test_unreadable_subfolder_is_reported_and_other_files_continue(tmp_path, sca
     events = scan(tmp_path)
 
     assert events["errors"] == []
-    assert events["matches"] == [f"{good}: ERROR readable"]
+    assert events["matches"] == [f"{good}:1: ERROR readable"]
     assert len(events["skipped"]) == 1
     assert str(blocked) in events["skipped"][0]
     assert events["progress"][-1] == 100
@@ -253,7 +253,7 @@ def test_matches_before_later_file_failure_are_retained_with_warning(tmp_path, s
 
     events = scan(tmp_path)
 
-    assert events["matches"] == [f"{log}: ERROR readable"]
+    assert events["matches"] == [f"{log}:1: ERROR readable"]
     assert events["errors"] == []
     assert len(events["skipped"]) == 1
     assert str(log) in events["skipped"][0]

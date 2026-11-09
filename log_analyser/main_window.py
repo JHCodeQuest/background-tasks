@@ -22,29 +22,47 @@ class MainWindow(QWidget):
         self.thread = None
         self.worker = None
         self._close_requested = False
+        self._scan_status = "Ready"
+        self._match_count = 0
+        self._skipped_file_count = 0
+        self._skipped_folder_count = 0
         
         # label
-        self.path_label = QLabel("No file selected")
+        self.path_label = QLabel("No file or folder selected")
+        self.path_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.path_label.setWordWrap(True)
         self.pattern_input = QLineEdit()
         self.pattern_input.setPlaceholderText("Enter keyword or regex")
+        self.pattern_input.setAccessibleName("Search term")
+        self.search_label = QLabel("S&earch:")
+        self.search_label.setBuddy(self.pattern_input)
 
         # check box
-        self.regex_checkbox = QCheckBox("Regex")
-        self.case_checkbox = QCheckBox("Case sensitve")
+        self.regex_checkbox = QCheckBox("&Regex")
+        self.case_checkbox = QCheckBox("Case sensi&tive")
         
         #buttons
-        self.pick_button = QPushButton("Choose File/Folder")
-        self.start_button = QPushButton("Start")
-        self.cancel_button = QPushButton("Cancel")
+        self.pick_file_button = QPushButton("Choose &File")
+        self.pick_folder_button = QPushButton("Choose F&older")
+        self.start_button = QPushButton("&Start")
+        self.cancel_button = QPushButton("&Cancel")
         self.cancel_button.setEnabled(False)
 
         # progress bar
         self.progress = QProgressBar()
+        self.progress.setValue(0)
+        self.progress.setAccessibleName("Scan progress")
         self.results = QListWidget()
+        self.results.setAccessibleName("Search results")
+        self.status_label = QLabel()
+        self.status_label.setAccessibleName("Scan status")
+        self.status_label.setWordWrap(True)
+        self._update_status()
 
         # widget
         top = QHBoxLayout()
-        top.addWidget(self.pick_button)
+        top.addWidget(self.pick_file_button)
+        top.addWidget(self.pick_folder_button)
         top.addWidget(self.start_button)
         top.addWidget(self.cancel_button)
 
@@ -56,18 +74,21 @@ class MainWindow(QWidget):
         # layout
         layout = QVBoxLayout(self)
         layout.addWidget(self.path_label)
+        layout.addWidget(self.search_label)
         layout.addWidget(self.pattern_input)
         layout.addLayout(opts)
         layout.addLayout(top)
         layout.addWidget(self.progress)
         layout.addWidget(self.results)
+        layout.addWidget(self.status_label)
 
         # button connect
-        self.pick_button.clicked.connect(self.pick_path)
+        self.pick_file_button.clicked.connect(self.pick_file)
+        self.pick_folder_button.clicked.connect(self.pick_folder)
         self.start_button.clicked.connect(self.start_scan)
         self.cancel_button.clicked.connect(self.cancel_scan)
 
-    def pick_path(self):
+    def pick_file(self) -> None:
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Choose Log File",
@@ -78,8 +99,8 @@ class MainWindow(QWidget):
         if file_path:
             self.selected_path = file_path
             self.path_label.setText(file_path)
-            return
-        
+
+    def pick_folder(self) -> None:
         folder_path = QFileDialog.getExistingDirectory(
             self,
             "Choose Folder"
@@ -111,6 +132,11 @@ class MainWindow(QWidget):
                 return
         
         self.results.clear()
+        self._match_count = 0
+        self._skipped_file_count = 0
+        self._skipped_folder_count = 0
+        self._scan_status = "Scanning"
+        self._update_status()
         self.progress.setValue(0)
         self.start_button.setEnabled(False)
         self.cancel_button.setEnabled(True)
@@ -130,9 +156,10 @@ class MainWindow(QWidget):
         self.scan_requested.connect(self.worker.scan, Qt.ConnectionType.QueuedConnection)
         self.worker.progress.connect(self.progress.setValue)
         self.worker.progress_range.connect(self.progress.setRange)
-        self.worker.match_found.connect(self.results.addItem)
-        self.worker.skipped.connect(self.results.addItem)
+        self.worker.match_found.connect(self.on_match)
+        self.worker.skipped.connect(self.on_skipped)
         self.worker.error.connect(self.on_error)
+        self.worker.finished.connect(self.on_scan_finished)
         self.worker.finished.connect(self.thread.quit, Qt.ConnectionType.DirectConnection)
         self.thread.finished.connect(self.worker.deleteLater)
         self.thread.finished.connect(self.on_finished)
@@ -144,6 +171,37 @@ class MainWindow(QWidget):
     def cancel_scan(self):
         if self.thread is not None:
             self.thread.requestInterruption()
+            self.cancel_button.setEnabled(False)
+            if self._scan_status == "Scanning":
+                self._scan_status = "Cancelling"
+                self._update_status()
+
+    @Slot(str)
+    def on_match(self, message: str) -> None:
+        self.results.addItem(message)
+        self._match_count += 1
+        self._update_status()
+
+    @Slot(str, bool)
+    def on_skipped(self, message: str, directory: bool) -> None:
+        self.results.addItem(message)
+        if directory:
+            self._skipped_folder_count += 1
+        else:
+            self._skipped_file_count += 1
+        self._update_status()
+
+    @Slot(str)
+    def on_scan_finished(self, outcome: str) -> None:
+        self._scan_status = outcome
+        self._update_status()
+
+    def _update_status(self) -> None:
+        self.status_label.setText(
+            f"{self._scan_status} | Matches: {self._match_count} | "
+            f"Skipped files: {self._skipped_file_count} | Skipped folders: {self._skipped_folder_count}"
+        )
+        self.status_label.setAccessibleDescription(self.status_label.text())
 
     @Slot(str)
     def on_error(self, message):
